@@ -1,17 +1,16 @@
-import pandas as pd
 import numpy as np
-import torch
+import pandas as pd
 from lightning.pytorch.tuner import Tuner
+from matplotlib import pyplot as plt
 from sklearn import preprocessing
-from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import train_test_split
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
-from sklearn.model_selection import GroupShuffleSplit
+from torch import nn
+from torch.utils.data import DataLoader
+from pytorch_lightning import seed_everything
+from pytorch_lightning.callbacks import EarlyStopping, TQDMProgressBar
+from pytorch_lightning.loggers import CSVLogger
 # from pytorch_lightning.tuner import random_search
-from Model import TabularDataset, Autoencoder, AutoencoderModel
-import sys
+from ads.eval_utils import plot_latent_effect
+from ads.models.AEModel import AutoencoderModel
 
 # sys.path.insert(0, '../../2022_Haghighi_NatureMethods/utils/')
 # print(sys.path)
@@ -19,36 +18,24 @@ import sys
 # import dataset_paper_repo.utils.readProfiles
 # import dataset_paper_repo.utils.pred_models
 # from dataset_paper_repo.utils.pred_models import *
-from data_utils import load_data, split_train_test
+from ads.models.CAE import ConcreteAutoencoderFeatureSelector
+from data_utils import load_data, pre_process, prepare_data
 import os
 from typing import Dict, Union
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
+import seaborn as sns
 
 # from pytorch_lightning.utilities.cli import LightningCLI
 
 
-def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.LightningModule:
+def train_autoencoder(config: Dict[str, Union[str, float, int]],losses = {}) -> pl.LightningModule:
     # Read data
     cp, cp_features = load_data(config['data_dir'], config['dataset'], config['profile_type'])
 
-    # devide to train, val, test_mocks, and test_treated
-    datasets = split_train_test(cp,config,cp_features)
-
-    # construct dataset
-    dataset_modules = {}
-    for key in datasets.keys():
-        dataset_modules[key] = TabularDataset(datasets[key][cp_features])
-
-    # construct dataloaders
-    dataloaders = {}
-    for key in datasets.keys():
-        if key == 'train':
-            dataloaders[key] = DataLoader(dataset_modules[key], config['batch_size'], shuffle=True)
-        else:
-            dataloaders[key] = DataLoader(dataset_modules[key], config['batch_size'])
+    datasets, dataloaders,cp_features = prepare_data(cp, config, cp_features)
 
     # Initialize model
     hparams = {'input_size': len(cp_features),
@@ -56,15 +43,13 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.Lightning
         'l2_lambda': config['l2_lambda'],
         'lr': config['lr'],
     }
-    # (input_size=len(cp_features), latent_size = latent_size, lr = lr, l2_lambda = l2_lambda)
-    model = AutoencoderModel(hparams)
 
     # Set up logger and checkpoint callbacks
-    logger = TensorBoardLogger(save_dir=config['tb_logs_dir'], name=config['model_name'])
-
+    # logger = TensorBoardLogger(save_dir=config['tb_logs_dir'], name=config['exp_name'])
+    logger = CSVLogger(save_dir=config['tb_logs_dir']),
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=20,
+        patience=30,
         mode="min"
     )
 
@@ -78,22 +63,22 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.Lightning
     progressbar_callback = TQDMProgressBar(refresh_rate=150)
     # Train model
 
-
+    #TODO: move to lightning
     trainer = pl.Trainer(
         logger=logger,
         callbacks=[checkpoint_callback,early_stop_callback,progressbar_callback],
         max_epochs=config['max_epochs'],
         accelerator="auto",
         # progress_bar_refresh_rate=50,
-        precision=16 if config['use_16bit'] else 32,
-        deterministic=True,
-        fast_dev_run=config['fast_dev_run'],
+        precision=16 if config['use_16bit'] else 32
+        # deterministic=True,
+        # fast_dev_run=config['fast_dev_run']
     )
 
     # Run lr finder
     # lr_finder = trainer.tuner.lr_find(model, ...)
 
-    tuner = Tuner(trainer)
+    # tuner = Tuner(trainer)
     # lr_finder = tuner.lr_find(model, dataloaders['train'],dataloaders['val'])
 
     # Inspect results
@@ -108,17 +93,48 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.Lightning
     # suggested_bs = batch_size_finder.suggestion()
     # hparams['batch_size']=suggested_bs
 
-    model = AutoencoderModel(hparams)
+    #TODO: add support to 'model' variable
+    if config['model'] == 'ae':
+        model = AutoencoderModel(hparams)
 
-    trainer.fit(model, dataloaders['train'],dataloaders['val'])
+        trainer.fit(model, dataloaders['train'],dataloaders['val'])
+
+    # NOT SUPPORTED YET
+    elif config['model'] == 'cae':
+        print('Concrete AEs not supported yet...')
+        #TODO: when this works, run over K, do Yuval check of K hyperparameter
+
+        # Initialize the feature selector model
+        K = 10  # Number of features to select
+        output_function = nn.Linear(K, len(cp_features))  # Update with your desired output function
+        model = ConcreteAutoencoderFeatureSelector(K, output_function)
+
+        #TODO: test if CAE fit works
+        selector = ConcreteAutoencoderFeatureSelector(hparams)
+        trainer.fit(model, dataloaders['train'],dataloaders['val'])
+
+        #TODO: test if extraction of important features work
+        selector.compute_probs(trainer.concrete_select)
+
+        # Extract the indices of the most important features
+        indices = selector.get_indices()
+
+        # Extract the mask indicating the most important features
+        mask = selector.get_mask()
+
+        # Extract the most important features from the original data
+        selected_features = mask[:, indices]
+        #TODO: add support for test
 
     # Test model
     test_dataloaders = ['train','val','test_ctrl', 'test_treat']
 
 
-    losses = {}
     for data_subset in test_dataloaders:
         dataloader = dataloaders[data_subset]
+        # dict_res = trainer.test(model, dataloader)
+        # for res in dict_res:
+        #     losses[data_subset][res].append(dict_res[res])
         losses[data_subset] = trainer.test(model, dataloader)
 
     # disable grads + batchnorm + dropout
@@ -137,6 +153,7 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.Lightning
             x_recon_preds[subset].append(x_recon_pred.numpy())
             z_preds[subset].append(z_pred.numpy())
 
+
     x_recon_ctrl = np.concatenate(x_recon_preds['test_ctrl'])
     z_pred_ctrl = np.concatenate(z_preds['test_ctrl'])
 
@@ -145,184 +162,71 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]]) -> pl.Lightning
 
     # process and save anomaly detection output
     test_ctrl_out = datasets['test_ctrl'].copy()
-    test_treat_out = datasets['test_treated'].copy()
+    test_treat_out = datasets['test_treat'].copy()
 
-    test_ctrl_out[cp_features] = x_recon_ctrl
-    test_treat_out[cp_features] = x_recon_treat
+    test_ctrl_out.loc[:,cp_features] = x_recon_ctrl
+    test_treat_out.loc[:,cp_features] = x_recon_treat
 
-    os.makedirs(os.path.join(config['data_dir'], 'anomaly_output'), exist_ok=True)
-    os.makedirs(os.path.join(config['data_dir'], 'anomaly_output',config['dataset']), exist_ok=True)
-    test_ctrl_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],f'ad_out_ctrl.csv'))
-    test_treat_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],f'ad_out_treated.csv'))
+    test_ctrl_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'],f'ad_out_ctrl.csv'),compression='gzip')
+    test_treat_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_treated.csv'),compression='gzip')
 
     #TODO: add z_pred_saving and normalizing, keeping required indices.
     # z_pred_subset.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],f'embedding_test_ctrl.csv'))
 
-    test_ctrl_out_normalized = test_data_mocks.copy()
-    test_treat_out_normalized = test_data_treated.copy()
+    test_ctrl_out_normalized = datasets['test_ctrl'].copy()
+    test_treat_out_normalized = datasets['test_treat'].copy()
 
     scaler_cp = preprocessing.StandardScaler()
-    test_ctrl_out_normalized[cp_features] = scaler_cp.fit_transform(x_recon_ctrl)
-    test_treat_out_normalized[cp_features] = scaler_cp.transform(x_recon_treat)
+    test_ctrl_out_normalized.loc[:,cp_features] = scaler_cp.fit_transform(test_ctrl_out[cp_features].values.astype('float64'))
+    test_treat_out_normalized.loc[:,cp_features] = scaler_cp.transform(test_treat_out[cp_features].values.astype('float64'))
 
-    test_treat_out_normalized.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'], f'ad_out_ctrl_normalized.csv'))
+    test_treat_out_normalized.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_ctrl_zscores.csv'),compression='gzip')
     test_treat_out_normalized.to_csv(
-        os.path.join(config['data_dir'], 'anomaly_output', config['dataset'], f'ad_out_treated_normalized.csv'))
+        os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_treated_zscores.csv'),compression='gzip')
 
+    metrics = pd.read_csv(f"{trainer.logger.log_dir}/metrics.csv")
+    del metrics["step"]
+    metrics.set_index("epoch", inplace=True)
+    print(metrics.dropna(axis=1, how="all").head())
+    sns.relplot(data=metrics, kind="line")
+    plt.show()
     return model, losses
-    # # Evaluate the dataloaders, will get the metrics from validation_step in the model
-    # loaders_metrics = trainer.validate(model, dataloaders[predict_dataloaders])
-    # for i, (idx, metrics) in enumerate(zip(loaders_idx, loaders_metrics)):
-    #     mse = metrics[f'val_loss_epoch/dataloader_idx_{i}']
-    #     pcc = metrics[f'val_pcc_epoch/dataloader_idx_{i}']
-    #     res.append([*idx, mse, pcc])
-    #
-    # # Export results
-    # res_df = pd.DataFrame(res, columns=['Dataset', 'Plate', 'Subset', 'MSE', 'PCC'])
-    # if split_loaders is None:
-    #     save_results(res_df, args)
-    # else:
-    #     save_results(res_df, args, f'results_{split_loaders}.csv')
-    # # net = Net.load_from_checkpoint(PATH)
-    # # net.freeze()
-    # # out = net(x)
-    # return model, res
+
 
 if __name__ == '__main__':
 
     seed_everything(42)
     import yaml
-    import io
 
     # Read YAML file
     with open("config.yaml", 'r') as stream:
         config = yaml.safe_load(stream)
     print('start training...')
 
+    os.makedirs(os.path.join(config['data_dir'], 'anomaly_output'), exist_ok=True)
+    os.makedirs(os.path.join(config['data_dir'], 'anomaly_output',config['dataset']), exist_ok=True)
+    os.makedirs(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'], config['profile_type']), exist_ok=True)
+
+    tune_ldims = False
+    if tune_ldims:
+        l_dims = [32]
+        all_res = []
+        pcc_res =[]
+        for l_dim in l_dims:
+            config['latent_size'] = l_dim
+            model, res = train_autoencoder(config)
+            all_res.append(res)
+            pcc_res.append(res['val'][0]['pcc'])
+
+        #TODO: test plot latent effect
+        plot_latent_effect(pcc_res, l_dims)
+
+        best_ldim_ind = np.argmax(all_res)
+
+        config['latent_size'] = l_dims[best_ldim_ind]
+
     model, res = train_autoencoder(config)
-    # cli = LightningCLI(train_autoencoder)
-                       # model_class=AutoencoderModel,
-                       # save_config_overwrite=True,
-                       # log_save_interval=100)
-    model
-#
-# if __name__ == "__main__":
-#
-#
-#     procProf_dir = '/sise/assafzar-group/assafzar/genesAndMorph'
-#     # dataset type: CDRP, CDRP-bio, LINCS, LUAD, TAORF
-#     dataset = 'CDRP-bio'
-#
-#     # CP Profile Type options: 'augmented' , 'normalized', 'normalized_variable_selected'
-#     profileType = 'normalized_variable_selected'
-#
-#     ################################################
-#     # filtering to compounds which have high replicates for both GE and CP datasets
-#     # highRepOverlapEnabled=0
-#     # 'highRepUnion','highRepOverlap'
-#     # filter_perts = ''
-#     # repCorrFilePath = '../results/RepCor/RepCorrDF.xlsx'
-#     #
-#     # filter_repCorr_params = [filter_perts, repCorrFilePath]
-#     #
-#     # ################################################
-#     # pertColName = 'PERT'
-#     #
-#     # if dataset == 'TAORF':
-#     #     filter_perts = ''
-#     # else:
-#     #     filter_perts = 'highRepOverlap'
-#     #
-#     # if filter_perts:
-#     #     f = 'filt'
-#     # else:
-#     #     f = ''
-#
-#     seed_everything(42)
-#
-#     batch_size = 64
-#     latent_size = 16
-#     lr = 0.001
-#     max_epochs = 100
-#     val_check_interval = 0.5
-#     l2_lambda = 0.01
-#
-#
-#     cp, cp_features = load_data(procProf_dir, dataset, profileType)
-#
-#     mocks = cp[cp['Metadata_ASSAY_WELL_ROLE'] == 'mock']
-#
-#     train_data, val_data = train_test_split(cp, test_size=0.4)
-#     val_data, test_data_mocks = train_test_split(val_data, test_size=0.5)
-#     test_data_treated = cp[cp['Metadata_ASSAY_WELL_ROLE'] != 'mock']
-#
-#     # scale to training set
-#     scaler_cp = preprocessing.StandardScaler()
-#     train_data[cp_features] = scaler_cp.fit_transform(train_data[cp_features].values.astype('float64'))
-#     val_data[cp_features] = scaler_cp.transform(val_data[cp_features].values.astype('float64'))
-#     test_data_mocks[cp_features] = scaler_cp.transform(test_data_mocks[cp_features].values.astype('float64'))
-#     test_data_treated[cp_features] = scaler_cp.transform(test_data_treated[cp_features].values.astype('float64'))
-#
-#     # construct dataset
-#     train_dataset = TabularDataset(train_data[cp_features])
-#     val_dataset = TabularDataset(val_data[cp_features])
-#     test_dataset_mocks = TabularDataset(test_data_mocks[cp_features])
-#     test_dataset_treated = TabularDataset(test_data_treated[cp_features])
-#
-#     # construct dataloaders
-#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-#     val_loader = DataLoader(val_dataset, batch_size=batch_size)
-#     test_loader_mocks = DataLoader(test_dataset_mocks, batch_size=batch_size)
-#     test_loader_treated = DataLoader(test_dataset_treated, batch_size=batch_size)
-#
-#     # def train_autoencoder(data_path, batch_size, latent_size, lr, max_epochs, val_check_interval, l2_lambda):
-#     # data = pd.read_csv(data_path)
-#
-#     # train_data, val_data = train_test_split(cp_scaled, test_size=0.2)
-#     # train_dataset = TabularDataset(train_data[cp_features])
-#     # val_dataset = TabularDataset(val_data[cp_features])
-#     # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-#     # val_loader = DataLoader(val_dataset, batch_size=batch_size)
-#
-#     model = AutoencoderModel(input_size=len(cp_features), latent_size=latent_size, lr=lr, l2_lambda=l2_lambda)
-#
-#     early_stop_callback = EarlyStopping(
-#         monitor="val_loss",
-#         patience=5,
-#         mode="min"
-#     )
-#
-#     checkpoint_callback = ModelCheckpoint(
-#         monitor="val_loss",
-#         filename="best_autoencoder",
-#         save_top_k=1,
-#         mode="min",
-#     )
-#
-#     logger = TensorBoardLogger("tb_logs", name="autoencoder")
-#
-#     trainer = Trainer(
-#         logger=logger,
-#         callbacks=[early_stop_callback, checkpoint_callback],
-#         max_epochs=max_epochs,
-#         val_check_interval=val_check_interval,
-#         gpus=torch.cuda.device_count(),
-#         precision=16,
-#         deterministic=True,
-#         benchmark=True,
-#         auto_lr_find=True
-#     )
-#
-#     trainer.fit(model, train_loader, val_loader)
-#     # trainer.fit()
-#     # result = trainer.tuner.random_search(
-#     #     model,
-#     #     train_loader,
-#     #     val_loader,
-#     #     num_trials=10,
-#     #     timeout=600,
-#     #     objective="val_loss",
-#     #     direction="minimize",
-#     # )
-#     trainer.test(dataloaders=[val_loader,test_loader_mocks,test_loader_treated])
-#     # return result.best_model, result.best_hyperparameters
+    res
+
+
+    # model

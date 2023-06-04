@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import scipy.spatial
 import pandas as pd
@@ -40,8 +42,13 @@ def read_replicate_level_profiles(dataset_rootDir,dataset,profileType,per_plate_
 
     dataDir=dataset_rootDir+'/preprocessed_data/'+ds_info_dict[dataset][0]+'/'
         
-    cp_data_repLevel=pd.read_csv(dataDir+'/CellPainting/replicate_level_cp_'+profileType+'.csv.gz')    
-    l1k_data_repLevel=pd.read_csv(dataDir+'/L1000/replicate_level_l1k.csv.gz')  
+    # cp_data_repLevel=pd.read_csv(dataDir+'/CellPainting/replicate_level_cp_'+profileType+'.csv.gz')
+    cp_path = dataDir+'/CellPainting/replicate_level_cp_'+profileType+'.csv.gz'
+    if not os.path.exists(cp_path):
+        profileType = 'augmented'
+        cp_path = dataDir + '/CellPainting/replicate_level_cp_' + profileType + '.csv.gz'
+    cp_data_repLevel=pd.read_csv(cp_path)
+    l1k_data_repLevel=pd.read_csv(dataDir+'/L1000/replicate_level_l1k.csv.gz')
 
     cp_features, l1k_features =  extract_feature_names(cp_data_repLevel, l1k_data_repLevel);
     
@@ -50,18 +57,6 @@ def read_replicate_level_profiles(dataset_rootDir,dataset,profileType,per_plate_
     cp_data_repLevel=cp_data_repLevel.replace([np.inf, -np.inf], np.nan)
     
     #
-    null_vals_ratio=0.05; thrsh_std=0.0001;
-    cols2remove_manyNulls=[i for i in cp_features if (cp_data_repLevel[i].isnull().sum(axis=0)/cp_data_repLevel.shape[0])\
-                  >null_vals_ratio]   
-    cols2remove_lowVars = cp_data_repLevel[cp_features].std()[cp_data_repLevel[cp_features].std() < thrsh_std].index.tolist()
-
-    cols2removeCP = cols2remove_manyNulls + cols2remove_lowVars
-#     print(cols2removeCP)
-
-    cp_features = list(set(cp_features) - set(cols2removeCP))
-    cp_data_repLevel=cp_data_repLevel.drop(cols2removeCP, axis=1);
-    cp_data_repLevel[cp_features] = cp_data_repLevel[cp_features].interpolate()
-    
 #     cols2removeCP=[i for i in cp_features if cp_data_repLevel[i].isnull().sum(axis=0)>0]
 #     print(cols2removeCP)
     

@@ -1,8 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="alonshp@132.72.80.121:22 (3)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="alonshp@132.72.80.121:22 (4)" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
+      <paths name="alonshp@132.72.41.153:22 (5)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="alonshp@132.72.64.120:22 (4)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.64.120:22 (5)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.66.172:22 (2)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.66.172:22 (3)">
         <serverdata>
           <mappings>
             <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
@@ -16,7 +44,35 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="alonshp@132.72.67.129:22 (4)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="alonshp@132.72.80.121:22 (3)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.80.121:22 (4)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.80.127:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="alonshp@132.72.80.130:22 (4)">
         <serverdata>
           <mappings>
             <mapping deploy="/home/alonshp/AnomalyDetectionScreening" local="$PROJECT_DIR$" />

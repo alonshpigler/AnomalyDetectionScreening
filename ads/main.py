@@ -1,14 +1,13 @@
 import pandas as pd
-import numpy as np
 import torch
 from sklearn import preprocessing
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 # from pytorch_lightning.tuner import random_search
-from Model import TabularDataset, Autoencoder, AutoencoderModel
+from ads.models.Model import TabularDataset, AutoencoderModel
 import sys
 
 sys.path.insert(0, '../../2022_Haghighi_NatureMethods/utils/')
@@ -113,30 +112,6 @@ if __name__ == "__main__":
 
     cp, cp_features = load_data(procProf_dir, dataset, profileType)
 
-    mocks = cp[cp['Metadata_ASSAY_WELL_ROLE'] == 'mock']
-
-    train_data, val_data = train_test_split(cp, test_size=0.4)
-    val_data, test_data_mocks = train_test_split(val_data, test_size=0.5)
-    test_data_treated = cp[cp['Metadata_ASSAY_WELL_ROLE'] != 'mock']
-
-    # scale to training set
-    scaler_cp = preprocessing.StandardScaler()
-    train_data[cp_features] = scaler_cp.fit_transform(train_data[cp_features].values.astype('float64'))
-    val_data[cp_features] = scaler_cp.transform(val_data[cp_features].values.astype('float64'))
-    test_data_mocks[cp_features] = scaler_cp.transform(test_data_mocks[cp_features].values.astype('float64'))
-    test_data_treated[cp_features] = scaler_cp.transform(test_data_treated[cp_features].values.astype('float64'))
-
-    # construct dataset
-    train_dataset = TabularDataset(train_data[cp_features])
-    val_dataset = TabularDataset(val_data[cp_features])
-    test_dataset_mocks = TabularDataset(test_data_mocks[cp_features])
-    test_dataset_treated = TabularDataset(test_data_treated[cp_features])
-
-    # construct dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
-    test_loader_mocks = DataLoader(test_dataset_mocks, batch_size=batch_size)
-    test_loader_treated = DataLoader(test_dataset_treated, batch_size=batch_size)
 
     # def train_autoencoder(data_path, batch_size, latent_size, lr, max_epochs, val_check_interval, l2_lambda):
     # data = pd.read_csv(data_path)

@@ -57,7 +57,7 @@ def drop_cpds_with_null(df):
 
 def get_duplicate_replicates(cpd_df, min_num_reps=4):
     compounds_cnt = cpd_df.index.get_level_values(2).value_counts()
-    dup_compounds = (compounds_cnt[compounds_cnt == min_num_reps]).index
+    dup_compounds = (compounds_cnt[compounds_cnt >= min_num_reps]).index
     replicates_df = cpd_df[cpd_df.index.isin(dup_compounds, 2)]
     cpds = replicates_df.index.get_level_values(2).unique()
 
@@ -65,7 +65,7 @@ def get_duplicate_replicates(cpd_df, min_num_reps=4):
 
 
 def get_replicates_score(cpd_df, fields=None):
-    if not fields:
+    if fields is not None:
         fields = cpd_df.columns
 
     replicates_df, cpds = get_duplicate_replicates(cpd_df)
@@ -95,7 +95,7 @@ def get_null_distribution_replicates(
             start_again = True
             while (start_again):
                 rand_cpds = get_random_replicates(
-                    all_replicates.index,
+                    all_replicates.index.get_level_values(2),
                     num_reps_in_rand,
                     replicate
                 )
@@ -158,22 +158,29 @@ def calc_null_dist_median_scores(df, replicate_lists):
     #          'Metadata_Plate', 'Metadata_Well', 'Metadata_broad_id', 'Metadata_moa', 
     #          'broad_id', 'pert_iname', 'moa'], 
     #          axis = 1, inplace = True)
+
     median_corr_list = []
     for rep_list in replicate_lists:
         # df_reps = df.loc[rep_list].copy()
-        df_reps = df[df.index.isin(rep_list)]
+        # df_reps = df[df.index.isin(rep_list)]
+        df_reps = df[df.index.get_level_values(2).isin(rep_list)]
         reps_corr = df_reps.astype('float64').T.corr(method='pearson').values
         median_corr_val = median(list(reps_corr[np.triu_indices(len(reps_corr), k=1)]))
         median_corr_list.append(median_corr_val)
     return median_corr_list
 
 
-def get_null_dist_median_scores(null_distribution_cpds, df):
+def get_null_dist_median_scores(null_distribution_cpds, df, features = None):
     """ 
     This function calculate the median correlation scores for all 
     1000 lists of randomly combined compounds for each no_of_replicate class 
     """
+    
     null_distribution_medians = {}
+    
+    if features is not None:
+        df = df.loc[:,features]
+        
     for key in tqdm(null_distribution_cpds):
         # print(key)
 
@@ -205,6 +212,7 @@ def get_moa_p_vals(null_dist_median, df_med_values, method='map'):
     # df_replicate_class = df_med_values[df_med_values['no_of_replicates'] == key]
     # TODO - to adjust to no_of_replicates
     df_replicate_class = df_med_values.copy()
+    
     for cpd in df_replicate_class.index:
         # dose_p_values = []
         # for num in dose_list:
@@ -218,3 +226,100 @@ def get_moa_p_vals(null_dist_median, df_med_values, method='map'):
     sorted_null_p_vals = {key: value for key, value in sorted(null_p_vals.items(), key=lambda item: item[0])}
     return sorted_null_p_vals
     # return df_replicate_class
+
+    
+
+if __name__ == '__main__':
+
+    null_dist_path, slice_size, slice_id, dest = sys.argv[1:]
+    slice_size = int(slice_size)
+    slice_id = int(slice_id)
+    binarize = False
+    t = 2
+
+
+    zscores = {
+        # '4to1':{'path':f'/storage/users/g-and-n/tabular_models_results/41/ALL/zscores'},
+        # '2to1':{'path':f'/storage/users/g-and-n/tabular_models_results/21/ALL/zscores'},
+        # '5to5': {'path': f'/storage/users/g-and-n/tabular_models_results/111/ALL/zscores'},
+        # 'raw': {'path': f'/storage/users/g-and-n/tabular_models_results/30000/results/z_scores/pure/raw'},
+        # '5to5':{'path':f'/sise/assafzar-group/g-and-n/tabular_models_results/4000/zscores'},
+        # 'raw':{'path': f'/sise/assafzar-group/g-and-n/plates/raw_normalized'}
+        # '5to5':{'path':f'/storage/users/g-and-n/tabular_models_results/55/ALL/zscores'},
+    }
+    exps = [5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012]
+    for exp in exps:
+        exp_name = str(exp)
+        zscores[exp_name] = {}
+        zscores[exp_name]['path']= f'/sise/assafzar-group/g-and-n/tabular_models_results/{exp}/zscores'
+    # get plate numbers
+    cur_fld = f'/storage/users/g-and-n/tabular_models_results/41/ALL/'
+    all_plates = glob(os.path.join(cur_fld, 'zscores', '*'))
+    plate_nums = [os.path.split(plate)[-1] for plate in all_plates]
+
+    # load zscores
+    for model in zscores.keys():
+        plates = [os.path.join(zscores[model]['path'], plate) for plate in plate_nums]
+        zscores[model]['all'] = pd.concat([pd.read_csv(pth, index_col=[0, 1, 2, 3]) for pth in plates])
+
+        # Binarize
+        if binarize:
+            if model == 'raw':
+                zscores[model]['all'] = zscores[model]['all'].abs()
+            zscores[model]['all'] = zscores[model]['all'].apply(lambda s: s.apply(lambda x: 1.0 if x >= t else 0.0))
+
+    # Drop columns that are not in other results
+    # find joint columns
+    joint_cols = []
+    for model in zscores.keys():
+        model_cols = zscores[model]['all'].columns
+        if len(joint_cols) == 0:
+            joint_cols = model_cols
+        else:
+            joint_cols = np.intersect1d(joint_cols, model_cols)
+
+    # drop non-joint columns
+    for model in zscores.keys():
+        zscores[model]['all'].drop(columns=[c for c in zscores[model]['all'].columns if c not in joint_cols],
+                                   inplace=True)
+        print(zscores[model]['all'].shape)
+
+    for model in zscores.keys():
+        zscores[model]['trt'] = zscores[model]['all'].query('Metadata_ASSAY_WELL_ROLE == "treated"')
+        # zscores[model]['ctl'] = zscores[model]['all'].query('Metadata_ASSAY_WELL_ROLE == "mock"')
+
+
+    with open(null_dist_path, 'rb') as f:
+        # Load the pickle file
+        null_distribution_replicates = pickle.load(f)
+
+
+    cpds = list(null_distribution_replicates.keys())
+    cpds.sort()
+    cpds = cpds[slice_id * slice_size:(slice_id + 1) * slice_size]
+
+    for model in zscores.keys():
+        print(5, model)
+        cur_dest = os.path.join(dest, model)
+        os.makedirs(cur_dest, exist_ok=True)
+        cur_dest = os.path.join(cur_dest, f'{slice_id}.pickle')
+        res = {}
+
+        for cpd in cpds:
+            print(cpd)
+            cpd_replicates = zscores[model]['trt'][zscores[model]['trt'].index.isin([cpd], 2)].copy()
+            cpd_med_score = get_median_correlation(cpd_replicates)
+            del cpd_replicates
+
+            null_dist = null_distribution_replicates[cpd]
+            null_dist_scores = []
+            for null_idxs in null_dist:
+                cur_null = zscores[model]['trt'][zscores[model]['trt'].index.isin(null_idxs)].copy()
+                curr_null_score = get_median_correlation(cur_null)
+                null_dist_scores.append(curr_null_score)
+                del cur_null
+
+            res[cpd] = (cpd_med_score, null_dist_scores)
+
+        with open(cur_dest, 'wb') as handle:
+            pickle.dump(res, handle, protocol=pickle.HIGHEST_PROTOCOL)

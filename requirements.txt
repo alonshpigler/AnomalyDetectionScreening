@@ -10,3 +10,5 @@ pytorch-lightning
 scikit-learn
 tensorboard
 lightning
+pycytominer
+scipy==1.8.0
