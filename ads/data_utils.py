@@ -3,6 +3,8 @@ import os
 # from readProfiles import read_replicate_level_profiles
 import numpy as np
 import pandas as pd
+import pathlib as pathlib
+import pycytominer
 from pycytominer import feature_select
 from pycytominer.operations import variance_threshold, get_na_columns
 from sklearn import preprocessing
@@ -87,22 +89,44 @@ def prepare_data(data, config, features, modality ='CellPainting', do_fs = True)
   return datasets, dataloaders, cp_features
 
 
-def pre_process(data, config, features = None,overwrite = False):
+def pre_process(data, config, features = None, overwrite = False):
+
   #TODO: debug why not working with LINCS - nan in data (see Zernike_3_3)
   # take control data for training
 
-  data_path = os.path.join(config['data_dir'], 'anomaly_output', config['dataset'], config['profile_type'])
+  data_path = os.path.join(config['data_dir'], 'anomaly_output', config['dataset'], config['profile_type'],config['exp_name'])
+  os.makedirs(data_path, exist_ok =True)
   train_path = os.path.join(data_path, f'input_data_train.csv')
+  data_preprocess = data.copy()
 
   if not os.path.exists(train_path) or overwrite:
-    control_data = data[data[ds_info_dict[config['dataset']][2][0]] == ds_info_dict[config['dataset']][2][1]]
+    control_data = data_preprocess[data_preprocess[ds_info_dict[config['dataset']][2][0]] == ds_info_dict[config['dataset']][2][1]]
+    #
+    # # split data with equal samples from different plates (ds_info_dict[config['dataset'][3]])
+    # splitter = GroupShuffleSplit(test_size=config['test_split_ratio'], n_splits=2, random_state=7)
+    # split = splitter.split(control_data, groups=control_data[ds_info_dict[config['dataset']][3]])
+    # train_inds, test_inds = next(split)
+    #
+    # train_data_all = control_data.iloc[train_inds]
+    # test_data_mocks = control_data.iloc[test_inds]
+    #
+    # # train_data, val_data = train_test_split(mock_data, test_size=0.4)
+    # splitter = GroupShuffleSplit(test_size=.20, n_splits=2, random_state=7)
+    # split = splitter.split(train_data_all, groups=train_data_all[ds_info_dict[config['dataset']][3]])
+    # train_inds, val_inds = next(split)
+    #
+    # train_data = train_data_all.iloc[train_inds]
+    # val_data = train_data_all.iloc[val_inds]
+    #
+    # # leave out control data
+    # test_data_treated = data[data[ds_info_dict[config['dataset']][2][0]] != ds_info_dict[config['dataset']][2][1]]
 
     # split data with equal samples from different plates (ds_info_dict[config['dataset'][3]])
     splitter = GroupShuffleSplit(test_size=config['test_split_ratio'], n_splits=2, random_state=7)
     split = splitter.split(control_data, groups=control_data[ds_info_dict[config['dataset']][3]])
-    train_inds, test_inds = next(split)
+    train_all_inds, test_inds = next(split)
 
-    train_data_all = control_data.iloc[train_inds]
+    train_data_all = control_data.iloc[train_all_inds]
     test_data_mocks = control_data.iloc[test_inds]
 
     # train_data, val_data = train_test_split(mock_data, test_size=0.4)
@@ -113,14 +137,18 @@ def pre_process(data, config, features = None,overwrite = False):
     train_data = train_data_all.iloc[train_inds]
     val_data = train_data_all.iloc[val_inds]
 
-    # leave out control data
-    test_data_treated = data[data[ds_info_dict[config['dataset']][2][0]] != ds_info_dict[config['dataset']][2][1]]
+
+    data_preprocess.loc[train_data.index.values, 'set'] = 'train'
+    data_preprocess.loc[val_data.index.values, 'set'] = 'val'
+    data_preprocess.loc[test_data_mocks.index.values, 'set'] = 'test_ctrl'
+    data_preprocess.loc[data_preprocess[ds_info_dict[config['dataset']][2][0]] != ds_info_dict[config['dataset']][2][1], 'set'] = 'test_treat'
+
 
     datasets_pre_normalization = {
-      'train': train_data,
-      'val': val_data,
-      'test_ctrl': test_data_mocks,
-      'test_treat': test_data_treated
+      'train': data_preprocess.loc[data_preprocess['set'] == 'train', :],
+      'val': data_preprocess.loc[data_preprocess['set'] == 'val', :],
+      'test_ctrl': data_preprocess.loc[data_preprocess['set'] == 'test_ctrl', :],
+      'test_treat': data_preprocess.loc[data_preprocess['set'] == 'test_treat', :]
     }
 
     for set in datasets_pre_normalization.keys():
@@ -130,17 +158,90 @@ def pre_process(data, config, features = None,overwrite = False):
 
     print('normalizing to training set...')
 
-    # scale to training set
-    scaler_cp = preprocessing.StandardScaler()
-    datasets['train'].loc[:, features] = scaler_cp.fit_transform(datasets_pre_normalization['train'][features].values.astype('float64'))
-    datasets['train'].loc[:, features] = datasets['train'].loc[:, features].fillna(0)
-    for set in list(datasets.keys())[1:]:
-      datasets[set].loc[:, features] = scaler_cp.transform(datasets[set][features].values.astype('float64'))
-      datasets[set].loc[:, features] = datasets[set].loc[:, features].fillna(0)
+    data_normalized = pycytominer.normalize(
+      profiles=data_preprocess,
+      method="standardize",
+      samples="set == 'train'"
+    )
+
+    norm_method = "mad_robustize"
+    compression = {"method": "gzip", "mtime": 1}
+    float_format = "%.5g"
+    plate_col = "Metadata_Plate"
+    well_col = "Metadata_Well"
+    strata = [plate_col, well_col]
+    normalized_data = []
+    for plate_name in data_preprocess[plate_col].unique():
+      # Normalize Profiles (DMSO Control) - Level 4A Data
+      plate_data = data_preprocess[data_preprocess[plate_col]==plate_name]
+      norm_dmso_file = pathlib.PurePath(data_path, f"{plate_name}_normalized_train.csv.gz")
+      normalized_plate = pycytominer.normalize(
+        profiles=plate_data,
+        samples="set == 'train'",
+        # samples="Metadata_broad_sample == 'DMSO'",
+        method=norm_method,
+        # output_file=norm_dmso_file,
+        float_format=float_format,
+        compression_options=compression,
+      )
+      normalized_data.append(normalized_plate)
+    normalized_df = pd.concat(normalized_data)
+
+      # # Normalize Profiles (Whole Plate) - Level 4A Data
+      # norm_file = pathlib.PurePath(data_path, f"{plate_name}_normalized.csv.gz")
+      # normalize(
+      #   profiles=anno_df,
+      #   samples="all",
+      #   method=norm_method,
+      #   output_file=norm_file,
+      #   float_format=float_format,
+      #   compression_options=compression,
+      # )
+
+    # Feature Selection (DMSO Control) - Level 4B Data
+    feat_dmso_file = pathlib.PurePath(
+      data_path, f"{plate_name}_normalized_feature_select_dmso.csv.gz"
+    )
+
+    feature_select_ops = [
+      "drop_na_columns",
+      "variance_threshold",
+      "correlation_threshold",
+      "blocklist",
+    ]
+
+
+    # Feature Selection (Whole Plate) - Level 4B Data
+    feat_file = pathlib.PurePath(
+      data_path, f"cp_normalized_feature_select_by_train.csv.gz"
+    )
+    data_feature_selected = feature_select(
+      profiles=normalized_df,
+      samples= "set == 'train'",
+      features="infer",
+      operation=feature_select_ops,
+      output_file=feat_file,
+      float_format=float_format,
+      compression_options=compression,
+    )
+
+
 
     for set in datasets.keys():
       datasets[set].to_csv(os.path.join(data_path, f'input_data_{set}_zscores_by_train.csv'),compression='gzip')
+    print(datasets['test_treat'].shape)
 
+    # # scale to training set
+    # scaler_cp = preprocessing.StandardScaler()
+    # datasets['train'].loc[:, features] = scaler_cp.fit_transform(datasets_pre_normalization['train'][features].values.astype('float64'))
+    # datasets['train'].loc[:, features] = datasets['train'].loc[:, features].fillna(0)
+    # for set in list(datasets.keys())[1:]:
+    #   datasets[set].loc[:, features] = scaler_cp.transform(datasets[set][features].values.astype('float64'))
+    #   datasets[set].loc[:, features] = datasets[set].loc[:, features].fillna(0)
+
+    # for set in datasets.keys():
+    #   datasets[set].to_csv(os.path.join(data_path, f'input_data_{set}_zscores_by_train.csv'),compression='gzip')
+    # print(datasets['test_treat'].shape)
 
   else:
     datasets_pre_normalization={}
@@ -159,6 +260,12 @@ def pre_process(data, config, features = None,overwrite = False):
     test_data_mocks_n_by_test = datasets_pre_normalization['test_ctrl'].copy()
     test_data_treated_n_by_test = datasets_pre_normalization['test_treat'].copy()
 
+    normalized_df2 = pycytominer.normalize(
+      profiles=data_preprocess,
+      method="standardize",
+      samples="set == 'test_ctrl'"
+    )
+
     # raw_data_calculation
     scaler_cp = preprocessing.StandardScaler()
     test_data_mocks_n_by_test.loc[:, features] = scaler_cp.fit_transform(datasets_pre_normalization['test_ctrl'][features].values.astype('float64'))
@@ -169,6 +276,7 @@ def pre_process(data, config, features = None,overwrite = False):
 
     test_data_mocks_n_by_test.to_csv(os.path.join(data_path, f'input_data_test_ctrl_zscores_normalized_by_test.csv'),compression='gzip')
     test_data_treated_n_by_test.to_csv(os.path.join(data_path, f'input_data_test_treated_zscores_by_test.csv'),compression='gzip')
+    print(test_data_treated_n_by_test.shape)
   else:
     print('skipping raw calculation')
 

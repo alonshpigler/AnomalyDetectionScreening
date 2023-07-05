@@ -167,8 +167,8 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]],losses = {}) -> 
     test_ctrl_out.loc[:,cp_features] = x_recon_ctrl
     test_treat_out.loc[:,cp_features] = x_recon_treat
 
-    test_ctrl_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'],f'ad_out_ctrl.csv'),compression='gzip')
-    test_treat_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_treated.csv'),compression='gzip')
+    test_ctrl_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'],config['exp_name'],f'ad_out_ctrl.csv'),compression='gzip')
+    test_treat_out.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'],config['exp_name'], f'ad_out_treated.csv'),compression='gzip')
 
     #TODO: add z_pred_saving and normalizing, keeping required indices.
     # z_pred_subset.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],f'embedding_test_ctrl.csv'))
@@ -179,10 +179,10 @@ def train_autoencoder(config: Dict[str, Union[str, float, int]],losses = {}) -> 
     scaler_cp = preprocessing.StandardScaler()
     test_ctrl_out_normalized.loc[:,cp_features] = scaler_cp.fit_transform(test_ctrl_out[cp_features].values.astype('float64'))
     test_treat_out_normalized.loc[:,cp_features] = scaler_cp.transform(test_treat_out[cp_features].values.astype('float64'))
-
+    print(test_treat_out_normalized.shape)
     test_treat_out_normalized.to_csv(os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_ctrl_zscores.csv'),compression='gzip')
     test_treat_out_normalized.to_csv(
-        os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'], f'ad_out_treated_zscores.csv'),compression='gzip')
+        os.path.join(config['data_dir'], 'anomaly_output', config['dataset'],config['profile_type'],config['exp_name'], f'ad_out_treated_zscores.csv'),compression='gzip')
 
     metrics = pd.read_csv(f"{trainer.logger.log_dir}/metrics.csv")
     del metrics["step"]
