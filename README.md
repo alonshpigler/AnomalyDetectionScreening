@@ -86,19 +86,7 @@ References for screen data used in this work can be downloaded from [This reposi
 
 ## Run anomaly detection
 
-After downloading the data, run `ads/run_ad.py` to detect anomalies in the data.
-
-1. Place the files under `models/gpt4chan_model_float16` or `models/gpt4chan_model`.
-2. Place GPT-J 6B's config.json file in that same folder: [config.json](https://huggingface.co/EleutherAI/gpt-j-6B/raw/main/config.json).
-3. Download GPT-J 6B's tokenizer files (they will be automatically detected when you attempt to load GPT-4chan):
-
-```
-python download-model.py EleutherAI/gpt-j-6B --text-only
-```
-
-## Tensorboard visualization
-
-TBD.
+After downloading the data, run `main.py` to detect anomalies in the data.
 
 [comment]: <> (    conda activate textgen)
 
